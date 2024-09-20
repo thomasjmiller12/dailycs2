@@ -1,0 +1,5 @@
+ python-dotenv
+ SQLAlchemy
+ psycopg2
+ pydantic
+ tqdm
