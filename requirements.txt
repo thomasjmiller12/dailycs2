@@ -1,5 +1,12 @@
- python-dotenv
- SQLAlchemy
- psycopg2
- pydantic
- tqdm
+python-dotenv
+SQLAlchemy
+psycopg2
+pydantic
+tqdm
+requests
+beautifulsoup4
+pandas
+numpy
+scikit-learn
+matplotlib
+torch
