@@ -1,11 +1,8 @@
 import torch
-from torch import nn, optim
+from torch import nn
 from torch.utils.data import DataLoader, random_split
-from match_dataset import MatchDataset  # Make sure to import your dataset class
-from simple_model import NeuralNetwork  # Make sure to import your model class
-from tqdm import tqdm
-import numpy as np
 from sklearn.metrics import mean_absolute_error, r2_score
+import numpy as np
 import matplotlib.pyplot as plt
 
 def custom_loss(pred, target, active_mask):
@@ -18,19 +15,22 @@ def custom_loss(pred, target, active_mask):
                        torch.zeros_like(pred))
     return loss.sum() / (active_mask.sum() + 1e-8)  # Add small epsilon to avoid division by zero
 
-
-def train_model(model, train_loader, val_loader, criterion, optimizer, scheduler, num_epochs, device):
+def train_model(model, train_loader, val_loader, criterion, optimizer, scheduler, num_epochs, device, model_type):
     best_val_loss = float('inf')
+    train_losses = []
+    val_losses = []
     for epoch in range(num_epochs):
         model.train()
         train_loss = 0.0
         for batch_features, batch_labels in train_loader:
             batch_features, batch_labels = batch_features.to(device), batch_labels.to(device)
-            
             optimizer.zero_grad()
             outputs = model(batch_features)
-            active_mask = (batch_features.sum(dim=1) != 0)
-            loss = criterion(outputs, batch_labels, active_mask)
+            if model_type == 'simple':
+                active_mask = (batch_features.sum(dim=1) != 0)
+                loss = criterion(outputs, batch_labels, active_mask)
+            else:  # embedding model
+                loss = criterion(outputs, batch_labels)
             loss.backward()
             
             # Gradient clipping
@@ -49,12 +49,18 @@ def train_model(model, train_loader, val_loader, criterion, optimizer, scheduler
             for batch_features, batch_labels in val_loader:
                 batch_features, batch_labels = batch_features.to(device), batch_labels.to(device)
                 outputs = model(batch_features)
-                active_mask = (batch_features.sum(dim=1) != 0)
-                loss = criterion(outputs, batch_labels, active_mask)
+                if model_type == 'simple':
+                    active_mask = (batch_features.sum(dim=1) != 0)
+                    loss = criterion(outputs, batch_labels, active_mask)
+                else:  # embedding model
+                    loss = criterion(outputs, batch_labels)
                 val_loss += loss.item()
         
         train_loss /= len(train_loader)
         val_loss /= len(val_loader)
+        
+        train_losses.append(train_loss)
+        val_losses.append(val_loss)
         
         print(f"Epoch {epoch+1}/{num_epochs}, Train Loss: {train_loss:.4f}, Val Loss: {val_loss:.4f}")
         
@@ -63,8 +69,19 @@ def train_model(model, train_loader, val_loader, criterion, optimizer, scheduler
             torch.save(model.state_dict(), 'best_model.pth')
     
     print("Training completed.")
+    
+    # Plot the loss curves
+    plt.figure(figsize=(10, 6))
+    plt.plot(range(1, num_epochs + 1), train_losses, label='Train Loss')
+    plt.plot(range(1, num_epochs + 1), val_losses, label='Validation Loss')
+    plt.xlabel('Epoch')
+    plt.ylabel('Loss')
+    plt.title('Training and Validation Loss Curves')
+    plt.legend()
+    plt.savefig('loss_curves.png')
+    plt.close()
 
-def evaluate_model(model, test_loader, criterion, device, dataset):
+def evaluate_model(model, test_loader, criterion, device, dataset, model_type):
     model.eval()
     test_loss = 0.0
     all_active_predictions = []
@@ -74,13 +91,20 @@ def evaluate_model(model, test_loader, criterion, device, dataset):
         for batch_features, batch_labels in test_loader:
             batch_features, batch_labels = batch_features.to(device), batch_labels.to(device)
             outputs = model(batch_features)
-            active_mask = (batch_features.sum(dim=1) != 0)
-            loss = criterion(outputs, batch_labels, active_mask)
+            if model_type == 'simple':
+                active_mask = (batch_features.sum(dim=1) != 0)
+                loss = criterion(outputs, batch_labels, active_mask)
+            else:  # embedding model
+                loss = criterion(outputs, batch_labels)
             test_loss += loss.item()
             
             # Filter predictions and labels for active players
-            active_predictions = outputs[active_mask].detach().cpu().numpy()
-            active_labels = batch_labels[active_mask].cpu().numpy()
+            if model_type == 'simple':
+                active_predictions = outputs[active_mask].detach().cpu().numpy()
+                active_labels = batch_labels[active_mask].cpu().numpy()
+            else:  # embedding model
+                active_predictions = outputs.detach().cpu().numpy().flatten()
+                active_labels = batch_labels.cpu().numpy().flatten()
             
             all_active_predictions.extend(active_predictions)
             all_active_labels.extend(active_labels)
@@ -100,39 +124,19 @@ def evaluate_model(model, test_loader, criterion, device, dataset):
     print(f"Mean Absolute Error (Active Players): {mae:.4f}")
     print(f"R-squared Score (Active Players): {r2:.4f}")
 
-def main():
-    # Hyperparameters
-    batch_size = 256
-    learning_rate = 0.001
-    num_epochs = 100
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"Using device: {device}")
-
-    # Load and split the dataset
-    dataset = MatchDataset(threshold=10)
+def setup_data(dataset_class, threshold, batch_size):
+    # Load the dataset
+    dataset = dataset_class(threshold=threshold)
+    
+    # Split the dataset
     train_size = int(0.7 * len(dataset))
     val_size = int(0.15 * len(dataset))
     test_size = len(dataset) - train_size - val_size
     train_dataset, val_dataset, test_dataset = random_split(dataset, [train_size, val_size, test_size])
 
+    # Create DataLoaders
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
     val_loader = DataLoader(val_dataset, batch_size=batch_size)
     test_loader = DataLoader(test_dataset, batch_size=batch_size)
 
-    # Initialize the model
-    model = NeuralNetwork(num_players=dataset.num_players).to(device)
-
-    # Custom loss function and optimizer
-    criterion = custom_loss
-    optimizer = optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=1e-6)
-    scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=num_epochs)
-
-    # Train the model
-    train_model(model, train_loader, val_loader, criterion, optimizer, scheduler, num_epochs, device)
-
-    # Load the best model and evaluate
-    model.load_state_dict(torch.load('best_model.pth'))
-    evaluate_model(model, test_loader, criterion, device, dataset)
-
-if __name__ == "__main__":
-    main()
+    return dataset, train_loader, val_loader, test_loader
