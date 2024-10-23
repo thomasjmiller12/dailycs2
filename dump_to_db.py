@@ -1,8 +1,12 @@
 import pandas as pd
-from sqlalchemy import Table, MetaData, Column, Integer, String, Float, Boolean, DateTime, UniqueConstraint, text
+from sqlalchemy import Table, MetaData, Column, Integer, String, Float, Boolean, DateTime, UniqueConstraint, text, inspect
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.engine import Engine
 from tqdm import tqdm
+
+def get_existing_columns(engine: Engine, table_name: str):
+    inspector = inspect(engine)
+    return [column['name'] for column in inspector.get_columns(table_name)]
 
 def create_table_if_not_exists(engine: Engine, table_name: str, df: pd.DataFrame):
     metadata = MetaData()
@@ -30,6 +34,16 @@ def dump_df_to_db(df: pd.DataFrame, table_name: str, engine: Engine):
         return
 
     create_table_if_not_exists(engine, table_name, df)
+    
+    # Get existing columns from the database
+    existing_columns = get_existing_columns(engine, table_name)
+    
+    # Drop columns from DataFrame that don't exist in the database
+    columns_to_drop = [col for col in df.columns if col not in existing_columns]
+    df = df.drop(columns=columns_to_drop)
+    
+    if columns_to_drop:
+        print(f"Dropped columns not in database: {columns_to_drop}")
     
     metadata = MetaData()
     table = Table(table_name, metadata, autoload_with=engine)
