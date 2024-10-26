@@ -3,12 +3,17 @@ from sqlalchemy import Table, MetaData, Column, Integer, String, Float, Boolean,
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.engine import Engine
 from tqdm import tqdm
+import logging
+import time
+
+logger = logging.getLogger(__name__)
 
 def get_existing_columns(engine: Engine, table_name: str):
     inspector = inspect(engine)
     return [column['name'] for column in inspector.get_columns(table_name)]
 
 def create_table_if_not_exists(engine: Engine, table_name: str, df: pd.DataFrame):
+    start_time = time.time()
     metadata = MetaData()
     columns = []
     for column_name, dtype in df.dtypes.items():
@@ -23,48 +28,51 @@ def create_table_if_not_exists(engine: Engine, table_name: str, df: pd.DataFrame
         else:
             columns.append(Column(column_name, String))
     
-    # Add unique constraint to the 'id' column
     table = Table(table_name, metadata, *columns, UniqueConstraint('id', name='uq_id'))
     metadata.create_all(engine)
-    print(f"Table '{table_name}' created or already exists.")
+    logger.info(f"Table '{table_name}' setup completed in {time.time() - start_time:.2f} seconds")
 
-def dump_df_to_db(df: pd.DataFrame, table_name: str, engine: Engine):
+def dump_df_to_db(df: pd.DataFrame, table_name: str, engine: Engine, chunk_size: int = 500):
+    start_time = time.time()
+    
     if df.empty:
-        print("DataFrame is empty. No data to insert.")
+        logger.warning("DataFrame is empty. No data to insert.")
         return
 
     create_table_if_not_exists(engine, table_name, df)
     
-    # Get existing columns from the database
     existing_columns = get_existing_columns(engine, table_name)
-    
-    # Drop columns from DataFrame that don't exist in the database
     columns_to_drop = [col for col in df.columns if col not in existing_columns]
     df = df.drop(columns=columns_to_drop)
     
     if columns_to_drop:
-        print(f"Dropped columns not in database: {columns_to_drop}")
+        logger.info(f"Dropped columns not in database: {columns_to_drop}")
     
     metadata = MetaData()
     table = Table(table_name, metadata, autoload_with=engine)
 
-    with engine.begin() as conn:  # This will automatically commit at the end
-        for index, row in tqdm(df.iterrows(), total=len(df)):
-            stmt = insert(table).values(row.to_dict())
+    chunks = [df[i:i + chunk_size] for i in range(0, len(df), chunk_size)]
+    total_records = 0
+    
+    with engine.begin() as conn:
+        # Get initial count
+        initial_count = conn.execute(text(f"SELECT COUNT(*) FROM {table_name}")).scalar()
+        
+        for chunk in tqdm(chunks, desc="Processing chunks"):
+            records = chunk.to_dict('records')
+            
+            stmt = insert(table).values(records)
             stmt = stmt.on_conflict_do_update(
                 index_elements=['id'],
                 set_={c.key: c for c in stmt.excluded if c.key != 'id'}
             )
             conn.execute(stmt)
+            total_records += len(records)
 
-        # Query the table to check the number of rows
-        print(f"Table name: {table_name}")
-        result = conn.execute(text(f"SELECT COUNT(*) FROM {table_name}"))
-        row_count = result.scalar()
-        print(f"Number of rows in {table_name}: {row_count}")
-
-    # Verify that the changes are visible outside the transaction
-    with engine.connect() as conn:
-        result = conn.execute(text(f"SELECT COUNT(*) FROM {table_name}"))
-        row_count = result.scalar()
-        print(f"Verified number of rows in {table_name}: {row_count}")
+        # Get final count
+        final_count = conn.execute(text(f"SELECT COUNT(*) FROM {table_name}")).scalar()
+        new_entries = final_count - initial_count
+        
+    logger.info(f"Added {new_entries} new entries to {table_name}")
+    logger.info(f"Updated {total_records - new_entries} existing entries")
+    logger.info(f"Final row count in {table_name}: {final_count}")
