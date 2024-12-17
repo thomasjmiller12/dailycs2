@@ -18,7 +18,7 @@ image = (
 
 @stub.function(
     image=image,
-    schedule=modal.Period(minutes=15),
+    schedule=modal.Period(minutes=30), timeout=900
 )
 def run_scraper():
     print("Starting PrizePicks scraper...")

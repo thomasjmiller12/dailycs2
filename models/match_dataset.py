@@ -119,6 +119,78 @@ class DenseMatchDataset(Dataset):
         # Exclude 'generic' player
         filtered_counts = {player: count for player, count in self.player_datapoint_count.items() if player != 'generic'}
         return [player for player, _ in Counter(filtered_counts).most_common(n)]
+    
+    def get_generic_player_index(self):
+        return self.player_to_index['generic']
+
+class FocusPlayerDataset(Dataset):
+    def __init__(self, threshold=5):
+        # Use get_maps function to retrieve data
+        maps_data = get_maps()
+        
+        self.players, self.player_to_index, self.player_datapoint_count = get_unique_players(maps_data, threshold)
+        self.processed_data = []
+        
+        for map_data in maps_data:
+            for i, team in enumerate(map_data['teams']):
+                for j, player in enumerate(team['players']):
+                    if player['name'] not in self.players:
+                        continue
+                    skipmap = False
+                    teammates_vector = torch.zeros((1, 4), dtype=torch.int64)
+                    opponents_vector = torch.zeros((1, 5), dtype=torch.int64)
+                    label = torch.tensor(player['kills'], dtype=torch.float)
+                    
+                    teammate_idx = 0
+                    for k, team_inner in enumerate(map_data['teams']):
+                        if len(team_inner['players']) > 5:
+                            skipmap = True
+                            break
+                        for l, player_inner in enumerate(team_inner['players']):
+                            if player_inner['name'] == player['name']:
+                                continue
+                            if player_inner['name'] in self.players:
+                                if k == i:
+                                    teammates_vector[0][teammate_idx] = self.player_to_index[player_inner['name']]
+                                    teammate_idx += 1
+                                else:
+                                    opponents_vector[0][l] = self.player_to_index[player_inner['name']]
+                            else:
+                                if k == i:
+                                    teammates_vector[0][teammate_idx] = self.player_to_index['generic']
+                                    teammate_idx += 1
+                                else:
+                                    opponents_vector[0][l] = self.player_to_index['generic']
+                                self.player_datapoint_count['generic'] += 1
+                    
+                    if not skipmap:
+                        self.processed_data.append((teammates_vector, opponents_vector, label, self.player_to_index[player['name']]))
+
+    def __getitem__(self, idx):
+        # x,y where x is a tuple of (teammates_vector, opponents_vector, focus_player_index), and y is a tensor of kill count for the focus player
+        teammates_vector, opponents_vector, label, focus_player_index = self.processed_data[idx]
+        return (teammates_vector, opponents_vector, focus_player_index), label
+
+    def __len__(self):
+        return len(self.processed_data)
+    
+    @property
+    def num_players(self):
+        return len(self.players)
+    
+    def get_player_datapoint_counts(self):
+        return dict(self.player_datapoint_count)
+    
+    def get_top_n_players(self, n):
+        # Exclude 'generic' player
+        filtered_counts = {player: count for player, count in self.player_datapoint_count.items() if player != 'generic'}
+        return [player for player, _ in Counter(filtered_counts).most_common(n)]
+    
+    def get_generic_player_index(self):
+        return self.player_to_index['generic']
+
+
+
 
 def main():
     # Load MatchDataset

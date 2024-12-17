@@ -39,7 +39,7 @@ def get_maps(start_date=None, end_date=None):
 
     Returns:
         list: A list of dictionaries containing map data, including map_id, map_name,
-              match_datetime, and teams information (team names and player stats).
+              match_datetime, round number, and teams information (team names and player stats).
 
     Note:
         This function uses eager loading to optimize database queries.
@@ -69,6 +69,8 @@ def get_maps(start_date=None, end_date=None):
                 "map_id": map_instance.id,
                 "map_name": map_instance.name,
                 "match_datetime": map_instance.match.datetime.isoformat(),
+                "total_rounds": map_instance.total_rounds,
+                "round": map_instance.round,
                 "teams": [
                     {
                         "team_name": map_team.team_name,
@@ -173,3 +175,4 @@ def get_player_stats(player_name, expanded=False, start_date=None, end_date=None
         return stats
     finally:
         session.close()
+ 

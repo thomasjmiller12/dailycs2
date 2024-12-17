@@ -5,7 +5,7 @@ from db.db_utils import db_connect, create_session
 from db.models import Match, Map, MapTeam, Player
 from urllib.parse import urljoin
 from tqdm import tqdm
-from datetime import datetime
+from datetime import datetime, timedelta
 import json
 
 # Function to fetch HTML content
@@ -18,9 +18,9 @@ def fetch_html_content(url):
         print(f"Failed to fetch content from {url}: {e}")
         return None
 
-# Function to get finished matches from a page
-def get_finished_matches(page=1):
-    url = f"https://bo3.gg/matches/finished?&period=all_time&page={page}"
+# Function to get finished matches for a specific date
+def get_finished_matches(date):
+    url = f"https://bo3.gg/matches/finished?date={date}"
     base_url = "https://bo3.gg"
     matches = []
 
@@ -197,22 +197,28 @@ def insert_match_data(session, match_data):
     return False
 
 # Main function
-def main(num_pages=15):
+def main(start_date, end_date, stop_on_existing=True):
     engine, connection = db_connect()
     session = create_session(engine)
     
-    for page in range(1, num_pages + 1):
-        print(f"\nProcessing page {page}")
-        finished_matches = get_finished_matches(page)
+    current_date = datetime.strptime(start_date, '%Y-%m-%d')
+    end = datetime.strptime(end_date, '%Y-%m-%d')
+    
+    while current_date <= end:
+        date_str = current_date.strftime('%Y-%m-%d')
+        print(f"\nProcessing date {date_str}")
+        finished_matches = get_finished_matches(date_str)
         
         for match_info in tqdm(finished_matches):
             match_data = scrape_match_data(match_info['url'])
-            if insert_match_data(session, match_data):
+            if insert_match_data(session, match_data) and stop_on_existing:
                 session.close()
                 print("Reached a match that already exists in the database. Stopping scraping.")
-                return  # Exit the function if we've found an existing match
+                return
+        
+        current_date += timedelta(days=1)
     
     session.close()
 
 if __name__ == "__main__":
-    main(num_pages=15)  # You can change the number of max
+    main('2024-11-01', '2024-12-08', stop_on_existing=False)  # Example: Scrape January 2024

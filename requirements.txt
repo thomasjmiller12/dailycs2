@@ -1,10 +1,6 @@
-python-dotenv
-SQLAlchemy
-psycopg2-binary
-pydantic
-tqdm
-requests
-beautifulsoup4
-pandas
-argparse
-modal
+streamlit>=1.24.0
+plotly>=5.15.0
+sqlalchemy>=1.4.0
+psycopg2-binary>=2.9.0
+python-dotenv>=1.0.0
+numpy>=1.24.0

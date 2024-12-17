@@ -7,9 +7,9 @@ from training_utils import custom_loss, train_model, evaluate_model, setup_data
 
 def main():
     # Hyperparameters
-    batch_size = 128
+    batch_size = 512
     learning_rate = 0.001
-    num_epochs = 10
+    num_epochs = 700
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
 

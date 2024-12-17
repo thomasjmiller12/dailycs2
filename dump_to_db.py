@@ -32,7 +32,7 @@ def create_table_if_not_exists(engine: Engine, table_name: str, df: pd.DataFrame
     metadata.create_all(engine)
     logger.info(f"Table '{table_name}' setup completed in {time.time() - start_time:.2f} seconds")
 
-def dump_df_to_db(df: pd.DataFrame, table_name: str, engine: Engine, chunk_size: int = 500):
+def dump_df_to_db(df: pd.DataFrame, table_name: str, engine: Engine, chunk_size: int = 100):
     start_time = time.time()
     
     if df.empty:

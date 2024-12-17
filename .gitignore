@@ -57,3 +57,10 @@ coverage.xml
 
 # Sphinx documentation
 docs/_build/
+*.png
+*.csv
+*.xlsx
+*.xls
+*.json
+*.db
+*cache*
