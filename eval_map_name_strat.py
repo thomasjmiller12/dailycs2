@@ -471,18 +471,27 @@ class MapVarianceStrategy(BaseMapStrategy):
         plt.close()
 
 class ThresholdStrategy(BaseMapStrategy):
-    def __init__(self, overall_threshold: float = 0.7, map_threshold: float = 0.6, min_maps_threshold: int = 5):
+    def __init__(self, 
+                 over_overall_threshold: float = 0.66,
+                 over_map_threshold: float = 0.55,
+                 under_overall_threshold: float = 0.66,
+                 under_map_threshold: float = 0.55,
+                 min_maps_threshold: int = 5):
         """
         Strategy based on percentage of games over/under the line.
         
         Args:
-            overall_threshold: Percentage threshold for overall games (e.g., 0.7 for 70%)
-            map_threshold: Percentage threshold for map-specific games
+            over_overall_threshold: Percentage threshold for overall games over (e.g., 0.66 for 66%)
+            over_map_threshold: Percentage threshold for map-specific games over
+            under_overall_threshold: Percentage threshold for overall games under
+            under_map_threshold: Percentage threshold for map-specific games under
             min_maps_threshold: Minimum number of maps needed on the specific map
         """
         super().__init__()
-        self.overall_threshold = overall_threshold
-        self.map_threshold = map_threshold
+        self.over_overall_threshold = over_overall_threshold
+        self.over_map_threshold = over_map_threshold
+        self.under_overall_threshold = under_overall_threshold
+        self.under_map_threshold = under_map_threshold
         self.min_maps_threshold = min_maps_threshold
         
     def analyze_game(self, game: dict) -> Optional[Tuple[str, dict]]:
@@ -525,15 +534,16 @@ class ThresholdStrategy(BaseMapStrategy):
             map_under_pct = kills_under_line[map_mask].mean()
             
             # Track which criteria are met
-            overall_over_met = overall_over_pct >= self.overall_threshold
-            overall_under_met = overall_under_pct >= self.overall_threshold
-            map_over_met = map_over_pct >= self.map_threshold
-            map_under_met = map_under_pct >= self.map_threshold
+            overall_over_met = overall_over_pct >= self.over_overall_threshold
+            overall_under_met = overall_under_pct >= self.under_overall_threshold
+            map_over_met = map_over_pct >= self.over_map_threshold
+            map_under_met = map_under_pct >= self.under_map_threshold
             
             # Determine bet based on thresholds
             bet_decision = None
             bet_source = []
             
+            # Check over criteria
             if overall_over_met or map_over_met:
                 bet_decision = "OVER"
                 if overall_over_met and map_over_met:
@@ -542,7 +552,9 @@ class ThresholdStrategy(BaseMapStrategy):
                     bet_source = ["overall"]
                 else:
                     bet_source = ["map"]
-            elif overall_under_met or map_under_met:
+                    
+            # Check under criteria if no over bet was made
+            if bet_decision is None and (overall_under_met or map_under_met):
                 bet_decision = "UNDER"
                 if overall_under_met and map_under_met:
                     bet_source = ["both"]
@@ -811,7 +823,7 @@ def main(strategies: str = "both", use_cache: bool = True):
     # Test Variance Strategy
     if strategies.lower() in ["variance", "both"]:
         variance_strategy = MapVarianceStrategy(
-            kill_difference_threshold=1.5,
+            kill_difference_threshold=0.5,
             min_maps_threshold=5
         )
         variance_results = variance_strategy.evaluate_matches(matched_games, player_stats, verbose=verbose)
@@ -839,8 +851,10 @@ def main(strategies: str = "both", use_cache: bool = True):
     # Test Threshold Strategy
     if strategies.lower() in ["threshold", "both"]:
         threshold_strategy = ThresholdStrategy(
-            overall_threshold=0.66,
-            map_threshold=0.66,
+            over_overall_threshold=0.65,
+            over_map_threshold=0.60,
+            under_overall_threshold=0.70,  # More strict for unders
+            under_map_threshold=0.70,      # More strict for unders
             min_maps_threshold=5
         )
         threshold_results = threshold_strategy.evaluate_matches(matched_games, player_stats, verbose=verbose)
