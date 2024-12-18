@@ -706,6 +706,143 @@ class ThresholdStrategy(BaseMapStrategy):
         plt.savefig(os.path.join(graphs_dir, f"{self.name}_specific.png"))
         plt.close()
 
+class CombinedStrategy(BaseMapStrategy):
+    def __init__(self, 
+                 kill_difference_threshold: float = 0.5,
+                 over_map_threshold: float = 0.60,
+                 under_map_threshold: float = 0.70,
+                 min_maps_threshold: int = 5):
+        """
+        Strategy that combines both variance and threshold approaches.
+        Only places bets when both criteria are met.
+        
+        Args:
+            kill_difference_threshold: How many kills +/- from average to trigger a bet
+            over_map_threshold: Percentage threshold for map-specific games over
+            under_map_threshold: Percentage threshold for map-specific games under
+            min_maps_threshold: Minimum number of maps needed on the specific map
+        """
+        super().__init__()
+        self.kill_difference_threshold = kill_difference_threshold
+        self.over_map_threshold = over_map_threshold
+        self.under_map_threshold = under_map_threshold
+        self.min_maps_threshold = min_maps_threshold
+        
+    def analyze_game(self, game: dict) -> Optional[Tuple[str, dict]]:
+        """Analyze using both variance and map-specific threshold approaches."""
+        try:
+            player_name = game['player_name']
+            if player_name not in self.player_stats:
+                self.stats['no_map_data'] += 1
+                return None
+            
+            player_stats = self.player_stats[player_name]
+            line = game['line']
+            
+            # Get all data at once
+            df = player_stats._df
+            if len(df) == 0:
+                self.stats['no_map_data'] += 1
+                return None
+            
+            # Get map-specific data
+            map_mask = df['map_name'] == game['map_name']
+            map_count = map_mask.sum()
+            
+            if map_count < self.min_maps_threshold:
+                self.stats['insufficient_maps'] += 1
+                return None
+                
+            # Calculate variance metrics
+            map_avg = df[map_mask]['kills'].mean()
+            overall_avg = df['kills'].mean()
+            diff = map_avg - overall_avg
+            
+            # Calculate threshold metrics for map only
+            kills_over_line = df['kills'] > line
+            kills_under_line = df['kills'] < line
+            
+            map_over_pct = kills_over_line[map_mask].mean()
+            map_under_pct = kills_under_line[map_mask].mean()
+            
+            # Determine bet based on both strategies
+            bet_decision = None
+            
+            # Check OVER criteria
+            if abs(diff) >= self.kill_difference_threshold and diff > 0:
+                if map_over_pct >= self.over_map_threshold:
+                    bet_decision = "OVER"
+            
+            # Check UNDER criteria if no over bet was made
+            if bet_decision is None and abs(diff) >= self.kill_difference_threshold and diff < 0:
+                if map_under_pct >= self.under_map_threshold:
+                    bet_decision = "UNDER"
+            
+            if bet_decision is None:
+                self.stats['no_bet_criteria'] += 1
+                return None
+                
+            self.stats['bets_placed'] += 1
+            stats_dict = {
+                'total_games': len(df),
+                'map_games': map_count,
+                'overall_avg': overall_avg,
+                'map_avg': map_avg,
+                'diff_from_avg': diff,
+                'map_over_pct': map_over_pct,
+                'map_under_pct': map_under_pct
+            }
+            return (bet_decision, stats_dict)
+            
+        except Exception as e:
+            print(f"Error analyzing {game['player_name']} on {game['map_name']}: {str(e)}")
+            return None
+            
+    def print_bet_analysis(self, bet_info: dict):
+        """Print detailed analysis for combined strategy."""
+        print(f"\n  {bet_info['player_name']} on {bet_info['map_name']} ({bet_info['map_games']}/{bet_info['total_games']} maps):")
+        print(f"    Overall Avg: {bet_info['overall_avg']:.2f}")
+        print(f"    {bet_info['map_name']} Avg: {bet_info['map_avg']:.2f} ({bet_info['diff_from_avg']:+.2f} vs overall)")
+        print(f"    Map Over %: {bet_info['map_over_pct']:.1%}")
+        print(f"    Map Under %: {bet_info['map_under_pct']:.1%}")
+        print(f"    Line: {bet_info['line']}, Actual: {bet_info['actual_kills']}")
+        print(f"    Bet {bet_info['bet']}: {'✓' if bet_info['correct'] else '✗'}")
+    
+    def plot_strategy_specific(self, results: dict):
+        """Create visualization specific to combined strategy."""
+        graphs_dir = ensure_graphs_dir()
+        plt.style.use('default')
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 6))
+        
+        # Plot 1: Distribution of Map vs Overall Differences
+        diffs = [bet['diff_from_avg'] for bet in results['bets']]
+        correct = [bet['correct'] for bet in results['bets']]
+        
+        ax1.hist([
+            [d for d, c in zip(diffs, correct) if c],  # Correct bets
+            [d for d, c in zip(diffs, correct) if not c]  # Incorrect bets
+        ], label=['Correct', 'Incorrect'], bins=10, alpha=0.7)
+        ax1.set_xlabel('Difference from Average')
+        ax1.set_ylabel('Number of Bets')
+        ax1.set_title('Distribution of Map vs Overall Differences')
+        ax1.legend()
+        
+        # Plot 2: Success Rate by Map Win Rate
+        win_rates = [(bet['map_over_pct'] if bet['bet'] == "OVER" else bet['map_under_pct']) 
+                    for bet in results['bets']]
+        win_rate_bins = pd.cut(pd.Series(win_rates), bins=5)
+        success_by_rate = pd.Series(correct).groupby(win_rate_bins).mean() * 100
+        
+        ax2.plot(range(len(success_by_rate)), success_by_rate.values, marker='o')
+        ax2.set_xlabel('Map Win Rate Bins')
+        ax2.set_ylabel('Success Rate (%)')
+        ax2.set_title('Success Rate by Map Win Rate')
+        ax2.grid(True)
+        
+        plt.tight_layout()
+        plt.savefig(os.path.join(graphs_dir, f"{self.name}_specific.png"))
+        plt.close()
+
 def analyze_overall_projections(matched_games: List[dict]) -> dict:
     """
     Analyze all Map 3 projections to see how often overs and unders hit.
@@ -788,12 +925,12 @@ def print_overall_analysis(analysis: dict):
               f"{stats['under_rate']:>7.1f}%  "
               f"{stats['push_rate']:>7.1f}%")
 
-def main(strategies: str = "both", use_cache: bool = True):
+def main(strategies: str = "all", use_cache: bool = True):
     """
     Run strategy evaluations based on input parameter.
     
     Args:
-        strategies: Which strategies to run. Options: "variance", "threshold", or "both"
+        strategies: Which strategies to run. Options: "variance", "threshold", "combined", or "all"
         use_cache: Whether to use cached player stats between runs
     """
     # Create graphs directory
@@ -819,9 +956,10 @@ def main(strategies: str = "both", use_cache: bool = True):
     # Initialize results
     variance_results = None
     threshold_results = None
-        
+    combined_results = None
+    
     # Test Variance Strategy
-    if strategies.lower() in ["variance", "both"]:
+    if strategies.lower() in ["variance", "all"]:
         variance_strategy = MapVarianceStrategy(
             kill_difference_threshold=0.5,
             min_maps_threshold=5
@@ -849,7 +987,7 @@ def main(strategies: str = "both", use_cache: bool = True):
         variance_strategy.plot_strategy_specific(variance_results)
     
     # Test Threshold Strategy
-    if strategies.lower() in ["threshold", "both"]:
+    if strategies.lower() in ["threshold", "all"]:
         threshold_strategy = ThresholdStrategy(
             over_overall_threshold=0.65,
             over_map_threshold=0.60,
@@ -885,21 +1023,51 @@ def main(strategies: str = "both", use_cache: bool = True):
         threshold_strategy.plot_performance(threshold_results)
         threshold_strategy.plot_strategy_specific(threshold_results)
     
+    # Test Combined Strategy
+    if strategies.lower() in ["combined", "all"]:
+        combined_strategy = CombinedStrategy(
+            kill_difference_threshold=0.7,
+            over_map_threshold=0.60,
+            under_map_threshold=0.70,
+            min_maps_threshold=5
+        )
+        combined_results = combined_strategy.evaluate_matches(matched_games, player_stats, verbose=verbose)
+        
+        print("\n=== Combined Strategy Results ===")
+        print(f"Total Bets Placed: {combined_results['total_bets']}")
+        print(f"Overall Success Rate: {combined_results['success_rate']}%")
+        print(f"Over Success Rate: {combined_results['over_stats']['rate']}% ({combined_results['over_stats']['correct']}/{combined_results['over_stats']['total']})")
+        print(f"Under Success Rate: {combined_results['under_stats']['rate']}% ({combined_results['under_stats']['correct']}/{combined_results['under_stats']['total']})")
+        
+        # Print detailed stats
+        stats = combined_results['stats']
+        print(f"\nCombined Strategy Analysis Stats:")
+        print(f"Total Games Checked: {stats['total_checked']}")
+        print(f"No Map Data: {stats['no_map_data']}")
+        print(f"Insufficient Maps: {stats['insufficient_maps']}")
+        print(f"No Bet Criteria Met: {stats['no_bet_criteria']}")
+        print(f"Bets Placed: {stats['bets_placed']}")
+        
+        # Generate plots
+        print("\nGenerating Combined Strategy plots...")
+        combined_strategy.plot_performance(combined_results)
+        combined_strategy.plot_strategy_specific(combined_results)
+    
     print("\nPlots saved to strategy_graphs directory")
     
-    return variance_results, threshold_results
+    return variance_results, threshold_results, combined_results
 
 if __name__ == "__main__":
     import sys
     
-    # Get strategy from command line argument, default to "both"
-    strategy = "both"
+    # Get strategy from command line argument, default to "all"
+    strategy = "all"
     use_cache = True
     
     if len(sys.argv) > 1:
         strategy = sys.argv[1].lower()
-        if strategy not in ["variance", "threshold", "both"]:
-            print("Invalid strategy. Please use 'variance', 'threshold', or 'both'")
+        if strategy not in ["variance", "threshold", "combined", "all"]:
+            print("Invalid strategy. Please use 'variance', 'threshold', 'combined', or 'all'")
             sys.exit(1)
     
     if len(sys.argv) > 2:
