@@ -3,7 +3,7 @@ from pp import get_projections
 import os
 
 # Create a stub for the Modal app
-stub = modal.Stub("prizepicks-scraper")
+stub = modal.App("prizepicks-scraper")
 
 # Create an image with all required dependencies
 image = (
@@ -18,7 +18,7 @@ image = (
 
 @stub.function(
     image=image,
-    schedule=modal.Period(minutes=30), timeout=900
+    schedule=modal.Period(minutes=10), timeout=900
 )
 def run_scraper():
     print("Starting PrizePicks scraper...")

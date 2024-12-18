@@ -221,4 +221,4 @@ def main(start_date, end_date, stop_on_existing=True):
     session.close()
 
 if __name__ == "__main__":
-    main('2024-11-01', '2024-12-08', stop_on_existing=False)  # Example: Scrape January 2024
+    main('2024-12-09', '2024-12-17', stop_on_existing=False)  # Example: Scrape January 2024

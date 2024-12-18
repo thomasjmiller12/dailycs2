@@ -1,8 +1,9 @@
 from .db_utils import db_connect, create_session
-from .models import Player, Match, Map, MapTeam  # Import necessary models
+from .models import Player, Match, Map, MapTeam, CS2Projection  # Import necessary models
 from sqlalchemy import func
 from sqlalchemy.orm import joinedload
 import numpy as np
+import pandas as pd
 
 def get_players(include_count=False):
     engine, _ = db_connect()
@@ -176,3 +177,133 @@ def get_player_stats(player_name, expanded=False, start_date=None, end_date=None
     finally:
         session.close()
  
+def get_player_data(player_name):
+    """
+    Get all match data for a specific player as a pandas DataFrame.
+    
+    Args:
+        player_name (str): Name of the player to get data for
+        
+    Returns:
+        pd.DataFrame: DataFrame containing player match data with joined table information
+    """
+    engine, _ = db_connect()
+    session = create_session(engine)
+    
+    try:
+        # Query player data with explicit join path
+        query = (
+            session.query(
+                Player.name,
+                Player.kills,
+                Player.deaths,
+                MapTeam.team_name,
+                Map.name.label('map_name'),
+                Map.score.label('map_score'), 
+                Map.total_rounds,
+                Map.round,
+                Match.time,
+                Match.url,
+                Match.datetime
+            )
+            .select_from(Player)  # Explicitly specify the starting point
+            .join(MapTeam, Player.map_team_id == MapTeam.id)  # Explicit join conditions
+            .join(Map, MapTeam.map_id == Map.id)
+            .join(Match, Map.match_id == Match.id)
+            .filter(Player.name == player_name)
+        )
+
+        player_data = query.all()
+
+        # Convert to DataFrame
+        df = pd.DataFrame(player_data, columns=[
+            'player_name', 'kills', 'deaths', 'team', 'map_name',
+            'map_score', 'total_rounds', 'round', 'match_time', 'match_url', 'match_datetime'
+        ])
+        
+        # Convert datetime column to datetime type
+        df['match_datetime'] = pd.to_datetime(df['match_datetime'])
+            
+        return df
+        
+    finally:
+        session.close()
+
+def get_map3_kill_projections():
+    """
+    Get all CS2 projections for Map 3 kills.
+    
+    Returns:
+        pd.DataFrame: DataFrame containing projections with relevant match information
+    """
+    engine, _ = db_connect()
+    session = create_session(engine)
+    
+    try:
+        query = (
+            session.query(CS2Projection)
+            .filter(CS2Projection.stat_type == 'MAP 3 Kills')
+        )
+        
+        projections = query.all()
+        
+        # Convert to DataFrame
+        df = pd.DataFrame([{
+            'projection_id': p.projection_id,
+            'player_name': p.player_name,
+            'team': p.team,
+            'line_score': p.line_score,
+            'start_time': p.start_time,
+            'game_id': p.game_id
+        } for p in projections])
+        
+        return df
+        
+    finally:
+        session.close()
+
+def get_map3_matches_on_date(target_date):
+    """
+    Get all Map 3 matches that occurred on a specific date.
+    
+    Args:
+        target_date: datetime.date object
+        
+    Returns:
+        pd.DataFrame with match information
+    """
+    engine, _ = db_connect()
+    session = create_session(engine)
+    
+    try:
+        query = (
+            session.query(
+                Match.datetime,
+                Map.name.label('map_name'),
+                Map.round,
+                MapTeam.team_name,
+                Player.name.label('player_name'),
+                Player.kills
+            )
+            .select_from(Match)
+            .join(Map)
+            .join(MapTeam)
+            .join(Player)
+            .filter(
+                func.date(Match.datetime) == target_date,
+                Map.round == 3
+            )
+        )
+        
+        results = query.all()
+        
+        # Convert to DataFrame
+        df = pd.DataFrame(results, columns=[
+            'datetime', 'map_name', 'round', 'team_name', 'player_name', 'kills'
+        ])
+        
+        return df
+        
+    finally:
+        session.close()
+
